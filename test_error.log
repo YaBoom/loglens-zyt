@@ -1,0 +1,4 @@
+2026-03-16 10:23:45 ERROR NullPointerException at com.example.Service.process:45 - Cannot invoke method on null object
+2026-03-16 10:23:46 ERROR java.lang.NullPointerException: null pointer in com.example.UserService.getUser
+2026-03-16 10:23:47 WARN Database connection slow, took 5000ms
+2026-03-16 10:23:48 INFO Application started successfully

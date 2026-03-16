@@ -26,7 +26,8 @@ def main():
 @click.option("--tail", "-t", type=int, help="只分析最后N行")
 @click.option("--level", "-l", default="ERROR", help="最低日志级别 (DEBUG|INFO|WARN|ERROR)")
 @click.option("--output", "-o", type=click.Path(), help="输出报告到文件")
-def analyze(log_file, tail, level, output):
+@click.option("--api-key", "-k", default=None, help="DeepSeek API Key (也可通过 DEEPSEEK_API_KEY 环境变量设置)")
+def analyze(log_file, tail, level, output, api_key):
     """分析日志文件"""
     
     console.print(f"\n🔍 正在分析日志: {log_file}")
@@ -37,7 +38,7 @@ def analyze(log_file, tail, level, output):
     start_time = time.time()
     
     try:
-        analyzer = LogAnalyzer()
+        analyzer = LogAnalyzer(api_key=api_key)
         report = analyzer.analyze(log_file, tail=tail, min_level=level)
         
         elapsed = time.time() - start_time
@@ -56,7 +57,8 @@ def analyze(log_file, tail, level, output):
 
 @main.command()
 @click.option("--level", "-l", default="ERROR", help="最低日志级别")
-def shell(level):
+@click.option("--api-key", "-k", default=None, help="DeepSeek API Key (也可通过 DEEPSEEK_API_KEY 环境变量设置)")
+def shell(level, api_key):
     """交互式分析模式"""
     
     console.print(Panel.fit(
@@ -65,7 +67,7 @@ def shell(level):
         border_style="cyan"
     ))
     
-    analyzer = LogAnalyzer()
+    analyzer = LogAnalyzer(api_key=api_key)
     
     while True:
         try:
@@ -98,7 +100,8 @@ def shell(level):
 @main.command()
 @click.argument("log_file", type=click.Path(exists=True))
 @click.option("--interval", "-i", default=5, help="监控间隔(秒)")
-def monitor(log_file, interval):
+@click.option("--api-key", "-k", default=None, help="DeepSeek API Key (也可通过 DEEPSEEK_API_KEY 环境变量设置)")
+def monitor(log_file, interval, api_key):
     """实时监控日志文件"""
     
     console.print(Panel.fit(
@@ -109,7 +112,7 @@ def monitor(log_file, interval):
         border_style="yellow"
     ))
     
-    analyzer = LogAnalyzer()
+    analyzer = LogAnalyzer(api_key=api_key)
     last_size = 0
     
     try:

@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional, List
 from .parser import LogParser, LogEntry
+from .llm_client import get_llm_client, LLMClient
 
 
 @dataclass
@@ -21,10 +22,19 @@ class AnalysisReport:
 
 class LogAnalyzer:
     """日志分析器"""
-    
-    def __init__(self, model_provider: str = "openai"):
+
+    def __init__(self, model_provider: str = "openai", api_key: str = None):
         self.parser = LogParser()
         self.model_provider = model_provider
+        self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+        self._llm_client: Optional[LLMClient] = None
+
+    @property
+    def llm_client(self) -> Optional[LLMClient]:
+        """获取LLM客户端"""
+        if self.api_key and not self._llm_client:
+            self._llm_client = get_llm_client(self.api_key)
+        return self._llm_client
     
     def analyze(self, log_path: str, tail: Optional[int] = None, min_level: str = "ERROR") -> AnalysisReport:
         """分析日志文件"""
@@ -81,19 +91,45 @@ class LogAnalyzer:
     
     def _analyze_with_ai(self, entries: List[LogEntry], error_summary: dict) -> tuple:
         """使用AI分析根因"""
-        
+
         # 提取关键错误信息
         error_messages = []
         for error in error_summary.get("errors", [])[:5]:
             error_messages.append(error.message[:200])  # 限制长度
-        
+
         # 构建提示词
         prompt = self._build_prompt(error_messages)
-        
-        # 模拟 AI 分析结果（实际项目中会调用 LLM API）
-        root_cause = self._simulate_ai_analysis(error_summary)
-        suggestions = self._generate_suggestions(error_summary)
-        
+
+        # 调试信息
+        print(f"[DEBUG] API Key已设置: {bool(self.api_key)}")
+        print(f"[DEBUG] LLM Client已初始化: {self.llm_client is not None}")
+        print(f"[DEBUG] 错误消息数量: {len(error_messages)}")
+
+        # 使用真实 LLM 分析
+        if self.llm_client and error_messages:
+            try:
+                print(f"[DEBUG] 正在调用 DeepSeek LLM...")
+                result = self.llm_client.analyze_log_error(
+                    error_messages,
+                    error_summary.get("error_types", {})
+                )
+                print(f"[DEBUG] LLM 调用成功!")
+                root_cause = result["root_cause"]
+                suggestions = result["suggestions"]
+            except Exception as e:
+                # LLM调用失败时回退到本地分析
+                print(f"⚠️ LLM调用失败，回退到本地分析: {e}")
+                root_cause = self._local_analysis(error_summary)
+                suggestions = self._generate_suggestions(error_summary)
+        else:
+            # 没有API key时使用本地分析
+            if not self.api_key:
+                print("[DEBUG] 未设置API Key，使用本地分析")
+            if not error_messages:
+                print("[DEBUG] 没有错误信息，使用本地分析")
+            root_cause = self._local_analysis(error_summary)
+            suggestions = self._generate_suggestions(error_summary)
+
         return root_cause, suggestions
     
     def _build_prompt(self, error_messages: List[str]) -> str:
@@ -108,9 +144,9 @@ class LogAnalyzer:
 2. 需要如何修复？
 3. 需要注意什么？"""
     
-    def _simulate_ai_analysis(self, error_summary: dict) -> str:
-        """模拟AI分析（实际项目中替换为真实LLM调用）"""
-        
+    def _local_analysis(self, error_summary: dict) -> str:
+        """本地分析根因（无API key时的备用方案）"""
+
         error_types = error_summary.get("error_types", {})
         
         # 基于错误类型推断根因

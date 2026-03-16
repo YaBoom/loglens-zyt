@@ -30,22 +30,48 @@ cd loglens-zyt
 pip install -e .
 ```
 
+### 依赖说明
+
+LogLens 使用 `requests` 库调用 DeepSeek LLM API，请确保已安装：
+
+```bash
+pip install requests
+```
+
+## 🔑 API Key 配置
+
+LogLens 支持 DeepSeek 大模型进行智能根因分析，需要配置 API Key：
+
+```bash
+# 方式1: 通过命令行参数
+loglens analyze app.log -k sk-your-api-key
+
+# 方式2: 通过环境变量（推荐）
+set DEEPSEEK_API_KEY=sk-your-api-key
+loglens analyze app.log
+```
+
+获取 API Key: [DeepSeek开放平台](https://platform.deepseek.com/)
+
 ## 🚀 快速开始
 
 ### 命令行使用
 
 ```bash
-# 分析日志文件
-loglens analyze /var/log/app.log
+# 分析日志文件（需要配置API Key才能使用LLM分析）
+loglens analyze /var/log/app.log -k sk-your-api-key
 
 # 分析最近100行
 loglens analyze /var/log/app.log --tail 100
 
-# 指定错误级别
+# 指定错误级别（默认ERROR）
 loglens analyze /var/log/app.log --level error
 
+# 也支持WARN级别
+loglens analyze /var/log/app.log --level warn
+
 # 交互式分析
-loglens shell
+loglens shell -k sk-your-api-key
 ```
 
 ### Python API
@@ -53,10 +79,16 @@ loglens shell
 ```python
 from loglens import LogAnalyzer
 
+# 方式1: 通过参数传入API Key
+analyzer = LogAnalyzer(api_key="sk-your-api-key")
+
+# 方式2: 通过环境变量（自动读取DEEPSEEK_API_KEY）
 analyzer = LogAnalyzer()
+
 report = analyzer.analyze("path/to/logfile.log")
-print(report.summary)
-print(report.suggestions)
+print(report.summary)      # 分析摘要
+print(report.root_cause)   # 根因分析
+print(report.suggestions)  # 修复建议
 ```
 
 ### Web界面
@@ -68,29 +100,51 @@ loglens web
 
 ## 📖 使用示例
 
-### 1. 分析应用日志
+### 1. 分析应用日志（LLM智能分析）
 
 ```bash
-$ loglens analyze app.log
+$ loglens analyze app.log -k sk-your-api-key
 
-🔍 分析完成！
+🔍 正在分析日志: app.log
+🎯 最低级别: ERROR
 
-📊 问题摘要:
-- 检测到 15 个 ERROR
-- 3 个 ConnectionTimeout
-- 2 个 NullPointerException
+[DEBUG] API Key已设置: True
+[DEBUG] LLM Client已初始化: True
+[DEBUG] 正在调用 DeepSeek LLM...
+[DEBUG] LLM 调用成功!
 
-🎯 根因分析:
-主要问题：数据库连接池耗尽
-- 错误堆栈显示 HikariCP 连接等待超时
-- 同时有大量慢查询在执行
+┌─────────────────────────────────────────┐
+│ 📊 分析摘要                              │
+├─────────────────────────────────────────┤
+│ 检测到 2 个错误:                         │
+│   - GenericError: 2 个                   │
+└─────────────────────────────────────────┘
 
-💡 修复建议:
-1. 增加连接池大小: spring.datasource.hikari.maximum-pool-size=20
-2. 优化慢查询，添加索引
-3. 实现连接池监控告警
+┌─────────────────────────────────────────┐
+│ 🎯 根因分析                              │
+├─────────────────────────────────────────┤
+│ UserService.getUser方法调用时出现        │
+│ GenericError，可能是数据库连接异常、     │
+│ 用户数据不存在或参数验证失败导致         │
+└─────────────────────────────────────────┘
 
-⏱️ 耗时: 2.3秒
+┌─────────────────────────────────────────┐
+│ 💡 修复建议                              │
+├─────────────────────────────────────────┤
+│ 1. 检查数据库连接状态和用户数据是否存在   │
+│ 2. 在UserService.getUser方法中添加       │
+│    更详细的错误日志                      │
+│ 3. 实现重试机制或降级策略                │
+└─────────────────────────────────────────┘
+
+╔════════════════════════════════════════╗
+│ 📈 统计信息                             │
+├──────────────┬─────────────────────────┤
+│ 分析行数     │ 4                       │
+│ 错误数量     │ 2                       │
+│ 警告数量     │ 0                       │
+│ 耗时         │ 4.61秒                  │
+╚════════════════════════════════════════╝
 ```
 
 ### 2. 实时监控模式
@@ -105,16 +159,35 @@ loglens monitor /var/log/app.log --watch
 loglens/
 ├── loglens/
 │   ├── __init__.py
-│   ├── analyzer.py      # 日志分析核心
+│   ├── analyzer.py      # 日志分析核心（含LLM集成）
 │   ├── parser.py        # 日志解析器
 │   ├── cli.py           # 命令行界面
-│   ├── web.py           # Web界面
+│   ├── llm_client.py    # DeepSeek LLM 客户端
 │   └── utils.py         # 工具函数
 ├── tests/               # 测试用例
 ├── docs/               # 文档
 ├── pyproject.toml
 └── README.md
 ```
+
+## 🔧 高级配置
+
+### 使用其他模型
+
+```python
+from loglens.llm_client import LLMClient
+
+# 使用自定义模型
+client = LLMClient(api_key="sk-your-key", model="deepseek-coder")
+```
+
+### 调试模式
+
+运行时会输出调试信息：
+- `[DEBUG] API Key已设置: True/False`
+- `[DEBUG] LLM Client已初始化: True/False`
+- `[DEBUG] 错误消息数量: X`
+- `[DEBUG] 正在调用 DeepSeek LLM...`
 
 ## 🤝 贡献
 
