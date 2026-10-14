@@ -2,6 +2,7 @@
 LogLens CLI - 命令行界面
 """
 
+import os
 import sys
 import time
 import click
@@ -15,7 +16,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option(version="0.1.0")
+@click.version_option(version="0.1.1")
 def main():
     """LogLens - 智能日志分析工具 🔍"""
     pass
@@ -27,18 +28,19 @@ def main():
 @click.option("--level", "-l", default="ERROR", help="最低日志级别 (DEBUG|INFO|WARN|ERROR)")
 @click.option("--output", "-o", type=click.Path(), help="输出报告到文件")
 @click.option("--api-key", "-k", default=None, help="DeepSeek API Key (也可通过 DEEPSEEK_API_KEY 环境变量设置)")
-def analyze(log_file, tail, level, output, api_key):
-    """分析日志文件"""
-    
+@click.option("--debug", "-d", is_flag=True, help="输出调试信息 (也可通过 LOGLENS_DEBUG=1 设置)")
+def analyze(log_file, tail, level, output, api_key, debug):
+    """分析日志文件（传入 - 可从 stdin 管道读取，如: grep ERROR app.log | loglens analyze -）"""
+
     console.print(f"\n🔍 正在分析日志: {log_file}")
     if tail:
         console.print(f"📄 只分析最后 {tail} 行")
     console.print(f"🎯 最低级别: {level}\n")
-    
+
     start_time = time.time()
-    
+
     try:
-        analyzer = LogAnalyzer(api_key=api_key)
+        analyzer = LogAnalyzer(api_key=api_key, debug=debug)
         report = analyzer.analyze(log_file, tail=tail, min_level=level)
         
         elapsed = time.time() - start_time
@@ -201,12 +203,8 @@ def _save_report(report, output_path):
     
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(content)
-    
+
     console.print(f"\n✅ 报告已保存到: {output_path}")
-
-
-# 添加 os 导入
-import os
 
 
 if __name__ == "__main__":

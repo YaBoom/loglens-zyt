@@ -3,6 +3,7 @@
 """
 
 import os
+import sys
 from dataclasses import dataclass
 from typing import Optional, List
 from .parser import LogParser, LogEntry
@@ -23,11 +24,17 @@ class AnalysisReport:
 class LogAnalyzer:
     """日志分析器"""
 
-    def __init__(self, model_provider: str = "openai", api_key: str = None):
+    def __init__(self, model_provider: str = "openai", api_key: str = None, debug: bool = False):
         self.parser = LogParser()
         self.model_provider = model_provider
         self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+        self.debug = debug or os.environ.get("LOGLENS_DEBUG", "").lower() in ("1", "true", "yes")
         self._llm_client: Optional[LLMClient] = None
+
+    def _debug_print(self, message: str) -> None:
+        """仅在 debug 模式下输出调试信息，避免污染正常输出"""
+        if self.debug:
+            print(f"[DEBUG] {message}")
 
     @property
     def llm_client(self) -> Optional[LLMClient]:
@@ -41,8 +48,8 @@ class LogAnalyzer:
         
         # 读取日志内容
         if log_path == "-":
-            # 从 stdin 读取
-            content = ""
+            # 从 stdin 读取（支持管道: grep ERROR app.log | loglens analyze -）
+            content = sys.stdin.read()
         elif tail:
             # 读取最后 tail 行
             with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -100,20 +107,20 @@ class LogAnalyzer:
         # 构建提示词
         prompt = self._build_prompt(error_messages)
 
-        # 调试信息
-        print(f"[DEBUG] API Key已设置: {bool(self.api_key)}")
-        print(f"[DEBUG] LLM Client已初始化: {self.llm_client is not None}")
-        print(f"[DEBUG] 错误消息数量: {len(error_messages)}")
+        # 调试信息（仅 debug 模式输出）
+        self._debug_print(f"API Key已设置: {bool(self.api_key)}")
+        self._debug_print(f"LLM Client已初始化: {self.llm_client is not None}")
+        self._debug_print(f"错误消息数量: {len(error_messages)}")
 
         # 使用真实 LLM 分析
         if self.llm_client and error_messages:
             try:
-                print(f"[DEBUG] 正在调用 DeepSeek LLM...")
+                self._debug_print("正在调用 DeepSeek LLM...")
                 result = self.llm_client.analyze_log_error(
                     error_messages,
                     error_summary.get("error_types", {})
                 )
-                print(f"[DEBUG] LLM 调用成功!")
+                self._debug_print("LLM 调用成功!")
                 root_cause = result["root_cause"]
                 suggestions = result["suggestions"]
             except Exception as e:
@@ -124,9 +131,9 @@ class LogAnalyzer:
         else:
             # 没有API key时使用本地分析
             if not self.api_key:
-                print("[DEBUG] 未设置API Key，使用本地分析")
+                self._debug_print("未设置API Key，使用本地分析")
             if not error_messages:
-                print("[DEBUG] 没有错误信息，使用本地分析")
+                self._debug_print("没有错误信息，使用本地分析")
             root_cause = self._local_analysis(error_summary)
             suggestions = self._generate_suggestions(error_summary)
 
