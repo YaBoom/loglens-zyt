@@ -2,8 +2,9 @@
 日志解析器 - 解析各种格式的日志
 """
 
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List
 
@@ -16,6 +17,8 @@ class LogEntry:
     message: str
     source: Optional[str]
     raw: str
+    # v0.1.2: JSON/JSONL 结构化日志附带的字段字典
+    fields: Optional[dict] = field(default=None)
 
 
 class LogParser:
@@ -38,13 +41,21 @@ class LogParser:
     
     LEVEL_KEYWORDS = {
         "DEBUG": "DEBUG",
-        "INFO": "INFO", 
+        "INFO": "INFO",
         "WARN": "WARNING",
         "WARNING": "WARNING",
         "ERROR": "ERROR",
         "FATAL": "FATAL",
         "CRITICAL": "CRITICAL",
         "TRACE": "DEBUG",
+    }
+
+    # v0.1.2: JSON 日志常见字段别名（不同日志框架字段名差异大）
+    JSON_FIELD_ALIASES = {
+        "timestamp": ("timestamp", "time", "ts", "@timestamp", "datetime", "date"),
+        "level": ("level", "severity", "lvl", "sev", "loglevel", "log_level"),
+        "message": ("message", "msg", "event", "text", "log", "content"),
+        "source": ("logger", "source", "component", "service", "app", "module", "name"),
     }
     
     def __init__(self):
@@ -66,6 +77,11 @@ class LogParser:
     
     def _parse_line(self, line: str) -> Optional[LogEntry]:
         """解析单行日志"""
+        # v0.1.2: 优先尝试 JSON/JSONL 结构化解析（纯 JSON 行或前缀 + 嵌入 JSON 对象）
+        json_entry = self._try_parse_json(line)
+        if json_entry:
+            return json_entry
+
         # 尝试标准格式
         match = self.compiled_patterns["standard"].match(line)
         if match:
@@ -111,6 +127,77 @@ class LogParser:
             raw=line
         )
     
+    def _try_parse_json(self, line: str) -> Optional[LogEntry]:
+        """v0.1.2: 尝试将一行解析为 JSON 日志。
+
+        支持两种形态:
+        1. 纯 JSON 行 (JSONL): {"level":"error","msg":"db timeout"}
+        2. 前缀 + 嵌入 JSON 对象: 2026-10-15 10:00:00 ERROR {"level":"error","msg":"..."}
+        解析失败（非 JSON / 截断 JSON）则返回 None，回退到文本格式解析。
+        """
+        if "{" not in line or "}" not in line:
+            return None
+
+        # 候选区间: 第一个 "{" 到最后一个 "}"
+        candidate = line[line.index("{"): line.rindex("}") + 1]
+        if not candidate.strip():
+            return None
+
+        try:
+            data = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+
+        # 按别名映射提取常见字段，剩余字段原样保留
+        fields = dict(data)
+        timestamp = None
+        level = "UNKNOWN"
+        message = ""
+        source = None
+
+        ts_val = self._pop_alias(fields, "timestamp")
+        if isinstance(ts_val, str):
+            timestamp = self._parse_timestamp(ts_val.replace("T", " ").replace("Z", ""))
+
+        level_val = self._pop_alias(fields, "level")
+        if isinstance(level_val, str) and level_val:
+            level = self._normalize_level(level_val)
+
+        msg_val = self._pop_alias(fields, "message")
+        if msg_val is not None:
+            message = str(msg_val)
+
+        source_val = self._pop_alias(fields, "source")
+        if isinstance(source_val, str):
+            source = source_val
+
+        # 嵌入 JSON 的行可能还有前缀（如 "10:00:00 ERROR {...}"），
+        # 消息为空时用前缀文本补充
+        if not message:
+            prefix = line[: line.index("{")].strip()
+            if prefix:
+                message = prefix
+            else:
+                message = line
+
+        return LogEntry(
+            timestamp=timestamp,
+            level=level,
+            message=message,
+            source=source,
+            raw=line,
+            fields=fields or None,
+        )
+
+    def _pop_alias(self, fields: dict, category: str):
+        """按类别从字段字典中弹出首个命中的别名字段"""
+        for alias in self.JSON_FIELD_ALIASES[category]:
+            if alias in fields:
+                return fields.pop(alias)
+        return None
+
     def _parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
         """解析时间戳"""
         formats = [
