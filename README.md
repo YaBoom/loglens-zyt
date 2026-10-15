@@ -199,14 +199,22 @@ MIT License
 
 ---
 
-## 📮 关注公众号（周更）  
+## 📮 关注公众号「YaBoom 的工具箱」
+
   
 每周一篇 LogLens 开发实录：真实代码 + 真实日志 + 踩坑复盘。  
   
 <img width="344" height="344" alt="799abd4c9d647fbc2844f1123f98f2ed" src="https://github.com/user-attachments/assets/8f810d63-0292-4278-b4cc-3105875d9e28" />
 
   
-回复【loglens】领取本项目的完整配置模板和日志分析速查表。
+### 🎁 关注后领取资料  
+  
+- 回复 \*\*【loglens】\*\* → 领取《日志分析速查表》高清长图  
+- 回复 \*\*【config】\*\* → 领取完整配置模板（config.ini + README 模板）  
+- 回复 \*\*【deepseek】\*\* → 领取 DeepSeek API 接入实战笔记  
+  
+不想扫码？资料包也放在这里：  
+👉 \[GitHub Release v0.1.0-resources\](https://github.com/YaBoom/loglens-zyt/releases/tag/v0.1.0-resources)
 
 
 <p align="center">Made with ❤️ by YaBoom</p>
