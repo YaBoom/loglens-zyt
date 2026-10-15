@@ -199,4 +199,14 @@ MIT License
 
 ---
 
+## 📮 关注公众号（周更）  
+  
+每周一篇 LogLens 开发实录：真实代码 + 真实日志 + 踩坑复盘。  
+  
+<img width="344" height="344" alt="799abd4c9d647fbc2844f1123f98f2ed" src="https://github.com/user-attachments/assets/8f810d63-0292-4278-b4cc-3105875d9e28" />
+
+  
+回复【loglens】领取本项目的完整配置模板和日志分析速查表。
+
+
 <p align="center">Made with ❤️ by YaBoom</p>
