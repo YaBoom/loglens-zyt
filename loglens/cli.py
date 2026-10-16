@@ -16,14 +16,34 @@ console = Console()
 
 
 @click.group()
-@click.version_option(version="0.1.2")
+@click.version_option(version="0.1.3")
 def main():
     """LogLens - 智能日志分析工具 🔍"""
     pass
 
 
+def _validate_log_file(ctx, param, value):
+    """v0.1.3: LOG_FILE 参数校验。
+
+    修复 `analyze -` 管道路由断裂: 旧实现用 click.Path(exists=True)，
+    会在参数校验阶段直接拒绝 "-"，导致帮助文本承诺的 stdin 管道
+    (grep ERROR app.log | loglens analyze -) 根本到不了分析逻辑。
+    现改为手动校验: "-" 走 stdin 分支（无管道输入时报错提示），
+    其他值按普通文件路径校验存在性。
+    """
+    if value == "-":
+        if sys.stdin.isatty():
+            raise click.BadParameter(
+                "stdin 为空: 请通过管道传入日志，如 grep ERROR app.log | loglens analyze -"
+            )
+        return value
+    if not os.path.exists(value):
+        raise click.BadParameter(f"文件不存在: {value}")
+    return value
+
+
 @main.command()
-@click.argument("log_file", type=click.Path(exists=True))
+@click.argument("log_file", callback=_validate_log_file)
 @click.option("--tail", "-t", type=int, help="只分析最后N行")
 @click.option("--level", "-l", default="ERROR", help="最低日志级别 (DEBUG|INFO|WARN|ERROR)")
 @click.option("--output", "-o", type=click.Path(), help="输出报告到文件")
@@ -32,7 +52,8 @@ def main():
 def analyze(log_file, tail, level, output, api_key, debug):
     """分析日志文件（传入 - 可从 stdin 管道读取，如: grep ERROR app.log | loglens analyze -）"""
 
-    console.print(f"\n🔍 正在分析日志: {log_file}")
+    source_label = "stdin 管道输入" if log_file == "-" else log_file
+    console.print(f"\n🔍 正在分析日志: {source_label}")
     if tail:
         console.print(f"📄 只分析最后 {tail} 行")
     console.print(f"🎯 最低级别: {level}\n")
