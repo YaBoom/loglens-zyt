@@ -30,7 +30,10 @@ class LogParser:
         "standard": r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|TRACE)\s+\[?([^\]]+)?\]?\s+(.*)",
         
         # Spring Boot 格式
-        "spring": r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+(\S+)\s+---\s+\[\s*(\S+)\]\s+(\S+):\s+(.*)",
+        # v0.1.4: logger 与冒号之间允许空格 — 真实输出形如
+        # "2026-10-19 10:00:01.123 ERROR 12345 --- [main] c.a.OrderService : NullPointerException"
+        # 旧正则写死 "(\S+):"，遇空格即不匹配，整行降级为 UNKNOWN
+        "spring": r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+(\S+)\s+---\s+\[\s*(\S+)\]\s+(\S+)\s*:\s+(.*)",
         
         # JSON 格式 (部分匹配)
         "json": r'"(timestamp|level|message)":\s*"([^"]+)"',

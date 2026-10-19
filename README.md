@@ -164,11 +164,23 @@ loglens/
 │   ├── cli.py           # 命令行界面
 │   ├── llm_client.py    # DeepSeek LLM 客户端
 │   └── utils.py         # 工具函数
-├── tests/               # 测试用例
+├── tests/               # 测试用例（v0.1.4 起真实存在）
 ├── docs/               # 文档
 ├── pyproject.toml
 └── README.md
 ```
+
+## 🧪 运行测试
+
+零依赖，使用 Python 标准库 `unittest`（无需安装 pytest）：
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+测试覆盖日志格式解析（标准 / Spring Boot / Python / JSON-JSONL）、级别过滤、
+错误聚合统计，以及 CLI 契约（`analyze -` 管道、`-o` 报告落盘、文件不存在报错）。
+提交 PR 前请确保全部通过。
 
 ## 🔧 高级配置
 
