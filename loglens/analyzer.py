@@ -3,8 +3,9 @@
 """
 
 import os
+import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List
 from .parser import LogParser, LogEntry
 from .llm_client import get_llm_client, LLMClient
@@ -19,6 +20,8 @@ class AnalysisReport:
     error_count: int
     warning_count: int
     analyzed_lines: int
+    # v0.1.5: 去重后的原始错误行样本（报告可读性：只看计数看不到具体报错内容）
+    error_samples: List[str] = field(default_factory=list)
 
 
 class LogAnalyzer:
@@ -81,9 +84,41 @@ class LogAnalyzer:
             suggestions=suggestions,
             error_count=error_summary["total_errors"],
             warning_count=len([e for e in filtered_entries if e.level == "WARNING"]),
-            analyzed_lines=len(entries)
+            analyzed_lines=len(entries),
+            error_samples=self._collect_error_samples(error_summary)
         )
     
+    def _collect_error_samples(self, error_summary: dict, limit: int = 5, max_len: int = 300) -> List[str]:
+        """v0.1.5: 收集去重后的原始错误行样本。
+
+        用户痛点: 报告此前只有计数和根因推断，看不到具体错误内容，
+        无法确认根因判断是否对得上自己的日志。这里从 error_summary
+        中取最近的错误条目，按错误类型去重（每类保留最新一条），
+        每行截断到 max_len 防止超长堆栈刷屏。
+        """
+        samples: List[str] = []
+        seen_types = set()
+        for error in reversed(error_summary.get("errors", [])):
+            # 复用 get_error_summary 的分类口径做去重键
+            if "Exception" in error.message:
+                match = re.search(r"(\w+Exception)", error.message)
+                key = match.group(1) if match else "Unknown"
+            elif "Error" in error.message:
+                match = re.search(r"(\w+Error)", error.message)
+                key = match.group(1) if match else "Error"
+            else:
+                key = "GenericError"
+            if key in seen_types:
+                continue
+            seen_types.add(key)
+            raw = error.raw.strip()
+            if len(raw) > max_len:
+                raw = raw[:max_len] + "…"
+            samples.append(raw)
+            if len(samples) >= limit:
+                break
+        return samples
+
     def _generate_summary(self, error_summary: dict) -> str:
         """生成摘要"""
         total = error_summary["total_errors"]
@@ -246,5 +281,6 @@ class LogAnalyzer:
             suggestions=suggestions,
             error_count=error_summary["total_errors"],
             warning_count=len([e for e in filtered_entries if e.level == "WARNING"]),
-            analyzed_lines=len(entries)
+            analyzed_lines=len(entries),
+            error_samples=self._collect_error_samples(error_summary)
         )

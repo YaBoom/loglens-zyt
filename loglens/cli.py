@@ -16,7 +16,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option(version="0.1.4")
+@click.version_option(version="0.1.5")
 def main():
     """LogLens - 智能日志分析工具 🔍"""
     pass
@@ -187,7 +187,18 @@ def _display_report(report, elapsed):
         title="💡 修复建议",
         border_style="yellow"
     ))
-    
+
+    # v0.1.5: 原始错误行样本（用户只看计数无法核对具体报错内容）
+    if report.error_samples:
+        samples_text = "\n".join(
+            f"{i}. {line}" for i, line in enumerate(report.error_samples, 1)
+        )
+        console.print(Panel(
+            samples_text,
+            title=f"🔍 错误样本（原始行，{len(report.error_samples)} 条去重）",
+            border_style="magenta"
+        ))
+
     # 统计
     table = Table(title="📈 统计信息", show_header=False)
     table.add_column("指标", style="cyan")
@@ -215,6 +226,11 @@ def _save_report(report, output_path):
 
 ## 修复建议
 {chr(10).join(report.suggestions)}
+
+## 错误样本（原始行，已按类型去重）
+```text
+{chr(10).join(report.error_samples) if report.error_samples else "（无）"}
+```
 
 ## 统计
 - 分析行数: {report.analyzed_lines}

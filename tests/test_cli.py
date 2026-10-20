@@ -72,7 +72,7 @@ class TestAnalyzeCommand(unittest.TestCase):
     def test_version_flag(self):
         result = self.runner.invoke(main, ["--version"], env=TEST_ENV)
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("0.1.4", result.output)
+        self.assertIn("0.1.5", result.output)
 
 
 if __name__ == "__main__":
