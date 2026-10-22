@@ -9,6 +9,64 @@ from datetime import datetime
 from typing import Optional, List
 
 
+# v0.1.6: 命名异常/错误类（NullPointerException / TimeoutError ...）
+# 只认"首字母大写 + Exception/Error 结尾"的标识符，避免把普通单词 error 当成类型。
+_NAMED_ERROR_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Exception|Error))\b")
+
+# v0.1.6: 无语义化类名的错误（"connection timed out after 5000ms"）按关键词归类。
+# 顺序敏感：越具体越靠前，兜底的 Timeout 必须放最后，否则会吞掉 ConnectionTimeout/ReadTimeout。
+# 归类目标是与 Java/Python 异常类同构的"可读类型名"，让计数和样本去重共用同一口径。
+_KEYWORD_ERROR_RULES = [
+    ("OutOfMemoryError", re.compile(
+        r"out\s*of\s*memory|\boom\b|cannot allocate memory|memory exhausted", re.I)),
+    ("ConnectionTimeout", re.compile(
+        r"connection\s*time[ds]?\s*out|connectiontimeout|connect\s*time[ds]?\s*out", re.I)),
+    ("ReadTimeout", re.compile(
+        r"(?:read|socket)\s*time[ds]?\s*out|readtimeout|sockettimeout", re.I)),
+    ("ConnectionRefused", re.compile(r"connection\s*refused|econnrefused", re.I)),
+    ("ConnectionReset", re.compile(r"connection\s*reset|broken\s*pipe|econnreset", re.I)),
+    ("UnknownHost", re.compile(
+        r"unknown\s*host|no\s*such\s*host|name\s*or\s*service\s*not\s*known|"
+        r"temporary\s*failure\s*in\s*name\s*resolution", re.I)),
+    ("Deadlock", re.compile(r"dead\s*lock", re.I)),
+    ("DiskFull", re.compile(r"no\s*space\s*left|disk\s*(?:is\s*)?full|enospc", re.I)),
+    ("PermissionDenied", re.compile(r"permission\s*denied|access\s*is\s*denied|eacces", re.I)),
+    ("AuthFailed", re.compile(
+        r"auth(?:entication|orization)?\s*(?:failed|failure)|invalid\s*(?:token|credentials?)", re.I)),
+    ("RateLimited", re.compile(r"rate\s*limit(?:ed)?|too\s*many\s*requests", re.I)),
+    ("Timeout", re.compile(r"time[ds]?\s*out|timedout", re.I)),
+]
+
+
+def classify_error(message: str) -> str:
+    """v0.1.6: 把任意错误消息归类成一个稳定的"错误类型"。
+
+    用户痛点（Sentry 官方多年投入的核心问题）：同类错误因为消息里带
+    可变参数（耗时 5000ms / 5001ms、订单号、IP）被拆成很多类，
+    计数看着一堆类型，实际只有一个问题——分组的价值大于计数。
+
+    策略（保守优先，宁可少合并也不要错合并）：
+    1. 有显式异常类名（XxxException / XxxError）直接用类名；
+    2. 否则按关键词规则表归类（超时/连接拒绝/OOM/磁盘满/权限...）；
+    3. 都不命中才回落 GenericError。
+    """
+    if not message:
+        return "Unknown"
+
+    match = _NAMED_ERROR_RE.search(message)
+    if match:
+        name = match.group(1)
+        # "Error"/"Exception" 单独出现没有信息量，交给关键词规则判断
+        if name not in ("Error", "Exception"):
+            return name
+
+    for type_name, pattern in _KEYWORD_ERROR_RULES:
+        if pattern.search(message):
+            return type_name
+
+    return "GenericError"
+
+
 @dataclass
 class LogEntry:
     """日志条目"""
@@ -233,25 +291,10 @@ class LogParser:
         """获取错误摘要"""
         errors = [e for e in entries if e.level in ("ERROR", "FATAL", "CRITICAL")]
         
-        # 统计错误类型
+        # 统计错误类型（v0.1.6: 统一走 classify_error，识别无语义类名的错误）
         error_types = {}
         for error in errors:
-            # 提取错误类型
-            if "Exception" in error.message:
-                match = re.search(r"(\w+Exception)", error.message)
-                if match:
-                    error_type = match.group(1)
-                else:
-                    error_type = "Unknown"
-            elif "Error" in error.message:
-                match = re.search(r"(\w+Error)", error.message)
-                if match:
-                    error_type = match.group(1)
-                else:
-                    error_type = "Error"
-            else:
-                error_type = "GenericError"
-            
+            error_type = classify_error(error.message)
             error_types[error_type] = error_types.get(error_type, 0) + 1
         
         return {

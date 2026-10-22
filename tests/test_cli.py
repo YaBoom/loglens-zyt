@@ -12,6 +12,7 @@ import unittest
 from click.testing import CliRunner
 
 from loglens.cli import main
+from loglens import __version__
 
 # 测试期间禁用 LLM: 保证走本地分析，不发起网络请求、结果可重复
 TEST_ENV = {"DEEPSEEK_API_KEY": ""}
@@ -70,9 +71,10 @@ class TestAnalyzeCommand(unittest.TestCase):
             self.assertIn("错误数量: 1", body)
 
     def test_version_flag(self):
+        """v0.1.6: 版本号只有 loglens.__version__ 一个来源，避免多处手写漂移"""
         result = self.runner.invoke(main, ["--version"], env=TEST_ENV)
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("0.1.5", result.output)
+        self.assertIn(__version__, result.output)
 
 
 if __name__ == "__main__":

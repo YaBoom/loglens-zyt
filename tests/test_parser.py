@@ -6,7 +6,7 @@
 
 import unittest
 
-from loglens.parser import LogParser
+from loglens.parser import LogParser, classify_error
 
 
 class TestTextFormats(unittest.TestCase):
@@ -133,6 +133,60 @@ class TestParseAndAggregation(unittest.TestCase):
         self.assertEqual(summary["total_errors"], 2)
         self.assertEqual(summary["error_types"].get("NullPointerException"), 1)
         self.assertEqual(summary["error_types"].get("TimeoutError"), 1)
+
+
+class TestErrorClassification(unittest.TestCase):
+    """v0.1.6: 错误类型归类（分组）契约。
+
+    核心契约：带可变参数的同类错误必须归到同一类型，
+    否则计数会被拆成一堆"各一条"的假类型。
+    """
+
+    def test_named_exception_wins(self):
+        self.assertEqual(classify_error("NullPointerException: order is null"), "NullPointerException")
+        self.assertEqual(classify_error("java.lang.OutOfMemoryError: Java heap space"), "OutOfMemoryError")
+
+    def test_variable_params_do_not_split_types(self):
+        """耗时/订单号不同，仍是同一类错误"""
+        a = classify_error("ConnectionTimeout: connection timeout after 5000ms")
+        b = classify_error("ConnectionTimeout: connection timeout after 5001ms")
+        self.assertEqual(a, "ConnectionTimeout")
+        self.assertEqual(a, b)
+
+    def test_keyword_types_without_class_name(self):
+        cases = {
+            "connection timed out after 3000ms": "ConnectionTimeout",
+            "read timed out while fetching user 42": "ReadTimeout",
+            "Connection refused: dial tcp 10.0.0.1:5432": "ConnectionRefused",
+            "Broken pipe while writing response": "ConnectionReset",
+            "unknown host api.pay.example.com": "UnknownHost",
+            "Transaction rolled back: deadlock detected": "Deadlock",
+            "[Errno 28] No space left on device": "DiskFull",
+            "open /etc/app.conf: permission denied": "PermissionDenied",
+            "upstream 429: too many requests": "RateLimited",
+            "request timeout": "Timeout",
+        }
+        for message, expected in cases.items():
+            with self.subTest(message=message):
+                self.assertEqual(classify_error(message), expected)
+
+    def test_generic_fallback(self):
+        self.assertEqual(classify_error("something went wrong in handler"), "GenericError")
+        self.assertEqual(classify_error(""), "Unknown")
+
+    def test_lowercase_error_word_is_not_a_type(self):
+        """"error" 普通单词不能被当成 XxxError 类型"""
+        self.assertEqual(classify_error("failed to send error report"), "GenericError")
+
+    def test_error_summary_groups_variable_messages(self):
+        entries = LogParser().parse(
+            "2026-10-19 10:00:00 ERROR [db] connection timeout after 5000ms\n"
+            "2026-10-19 10:00:01 ERROR [db] connection timeout after 8000ms\n"
+            "2026-10-19 10:00:02 ERROR [db] connection timed out after 9000ms\n"
+        )
+        summary = LogParser().get_error_summary(entries)
+        self.assertEqual(summary["total_errors"], 3)
+        self.assertEqual(summary["error_types"], {"ConnectionTimeout": 3})
 
 
 if __name__ == "__main__":
