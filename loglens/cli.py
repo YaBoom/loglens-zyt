@@ -206,6 +206,9 @@ def _display_report(report, elapsed):
     table.add_column("值", style="green")
     
     table.add_row("分析行数", str(report.analyzed_lines))
+    # v0.1.7: 只在真的发生了多行归并时提示，避免平时多一行噪音
+    if report.event_count and report.event_count != report.analyzed_lines:
+        table.add_row("事件数（多行已归并）", str(report.event_count))
     table.add_row("错误数量", str(report.error_count))
     table.add_row("警告数量", str(report.warning_count))
     
@@ -235,6 +238,7 @@ def _save_report(report, output_path):
 
 ## 统计
 - 分析行数: {report.analyzed_lines}
+- 事件数（多行已归并）: {report.event_count}
 - 错误数量: {report.error_count}
 - 警告数量: {report.warning_count}
 """

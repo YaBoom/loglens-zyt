@@ -13,6 +13,29 @@ from typing import Optional, List
 # 只认"首字母大写 + Exception/Error 结尾"的标识符，避免把普通单词 error 当成类型。
 _NAMED_ERROR_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Exception|Error))\b")
 
+# v0.1.7: 多行堆栈的"续行"识别。
+# 背调结论（Alibaba Logtail / Grafana Alloy / OneUptime / Dataset 文档一致）：
+# 采集器按行切分会把一条 Java 异常拆成 6~40 条无上下文记录，堆栈帧再也无法与
+# 触发它的异常关联——这是同类工具公认的头号痛点。
+#
+# 但这里刻意"反向定义"：不去描述堆栈长什么样，而是**只把明确像续行的行并入上一条**，
+# 其余一律当作新记录。原因是合并过宽比没合更危险——粘错会让两条独立日志变一条，
+# 错误计数静默变少，比刷屏更难发现。
+_CONTINUATION_RE = re.compile(
+    r"^(?:"
+    r"[ \t]+at[ \t]+\S+"                 # \tat com.x.Y.m(Y.java:10) / \tat module.func
+    r"|[ \t]{2,}\S"                      # 通用缩进续行（Python 源码行、折行消息）
+    r"|Caused by:"                       # Java 因果链
+    r"|Suppressed:"                      # Java suppressed 异常
+    r"|[ \t]*\.\.\.\s*\d+\s+more[ \t]*$" # Java ... 23 more
+    r"|[ \t]*File\s+\".+\",\s*line\s+\d+"# Python 堆栈帧
+    r")"
+)
+
+# Python traceback 的首行只是个标题，真正的异常在其后顶格那一行
+_TRACEBACK_START_RE = re.compile(r"Traceback\s*\(most recent call last\)")
+
+
 # v0.1.6: 无语义化类名的错误（"connection timed out after 5000ms"）按关键词归类。
 # 顺序敏感：越具体越靠前，兜底的 Timeout 必须放最后，否则会吞掉 ConnectionTimeout/ReadTimeout。
 # 归类目标是与 Java/Python 异常类同构的"可读类型名"，让计数和样本去重共用同一口径。
@@ -77,6 +100,8 @@ class LogEntry:
     raw: str
     # v0.1.2: JSON/JSONL 结构化日志附带的字段字典
     fields: Optional[dict] = field(default=None)
+    # v0.1.7: 归并进来的续行（堆栈帧 / Caused by / Python traceback 帧）
+    stack: List[str] = field(default_factory=list)
 
 
 class LogParser:
@@ -126,15 +151,130 @@ class LogParser:
         }
     
     def parse(self, content: str) -> List[LogEntry]:
-        """解析日志内容"""
+        """解析日志内容
+
+        v0.1.7: 先按"新事件起始"把物理行归并成逻辑记录，再解析表头。
+        一条 Java 异常连同它的 30 行堆栈 = 1 条记录，而不是 30 条无上下文的碎片。
+        """
         entries = []
-        for line in content.strip().split("\n"):
-            if not line.strip():
-                continue
-            entry = self._parse_line(line)
+        for header, continuation, tb_exception in self._group_records(content.split("\n")):
+            entry = self._parse_record(header, continuation, tb_exception)
             if entry:
                 entries.append(entry)
         return entries
+
+    def _group_records(self, lines: List[str]):
+        """v0.1.7: 把物理行归并成 (表头行, 续行列表, Python异常行) 三元组。
+
+        判定顺序（保守优先）：
+        1. 行本身是日志格式的起始行 → 一定是新记录，绝不并入上一条；
+        2. 行明确像续行（缩进 at/File、Caused by、... N more）→ 并入当前记录；
+        3. 当前记录是 Python traceback 且尚未收到异常行 → 该顶格行就是异常本身；
+        4. 其余 → 独立成一条新记录（宁可拆开，不可粘错）。
+
+        空行被跳过而不是用来截断记录 —— Java 常在 Caused by 前留空行，
+        用空行断组会把因果链拦腰切断。
+        """
+        records = []
+        header: Optional[str] = None
+        continuation: List[str] = []
+        tb_mode = False
+        tb_exception: Optional[str] = None
+
+        def flush():
+            nonlocal header, continuation, tb_mode, tb_exception
+            if header is not None:
+                records.append((header, continuation, tb_exception))
+            header, continuation, tb_mode, tb_exception = None, [], False, None
+
+        for raw in lines:
+            line = raw.rstrip("\r")
+            if not line.strip():
+                continue
+
+            if header is None:
+                header = line
+                tb_mode = bool(_TRACEBACK_START_RE.search(line))
+                continue
+
+            if _TRACEBACK_START_RE.search(line):
+                # Python 的 traceback 是紧跟在 ERROR 行后面逐行打印的，
+                # 它属于上面那条记录 —— 若当成新记录，一次故障会被算成两条错误。
+                continuation.append(line)
+                tb_mode = True
+                continue
+
+            if self._is_continuation(line):
+                continuation.append(line)
+                continue
+
+            if tb_mode and tb_exception is None and continuation:
+                # "Traceback..." 之后顶格的第一行是异常本身（ValueError: xxx），
+                # 它是记录的结尾而不是新记录。
+                tb_exception = line
+                flush()
+                continue
+
+            flush()
+            header = line
+            tb_mode = bool(_TRACEBACK_START_RE.search(line))
+
+        flush()
+        return records
+
+    def _is_continuation(self, line: str) -> bool:
+        """该行是否属于上一条记录的续行（堆栈帧等）"""
+        if self._looks_like_record_start(line):
+            return False
+        return bool(_CONTINUATION_RE.match(line))
+
+    def _looks_like_record_start(self, line: str) -> bool:
+        """行本身是否标志着一条新日志的开始（即使它带缩进）"""
+        stripped = line.lstrip()
+        if not stripped:
+            return False
+        for name in ("standard", "spring", "python"):
+            if self.compiled_patterns[name].match(stripped):
+                return True
+        return stripped.startswith("{") and stripped.endswith("}")
+
+    def _parse_record(
+        self,
+        header: str,
+        continuation: List[str],
+        tb_exception: Optional[str] = None,
+    ) -> Optional[LogEntry]:
+        """v0.1.7: 解析一条（可能多行的）逻辑记录"""
+        # 表头可能带缩进（v0.1.7 允许缩进的格式起始行独立成条），
+        # 但格式正则都按行首锚定，所以匹配前先去掉缩进。
+        entry = self._parse_line(header.lstrip())
+        if entry is None:
+            return None
+
+        entry.raw = "\n".join([header] + continuation + ([tb_exception] if tb_exception else []))
+
+        if tb_exception is not None:
+            # Python traceback：异常行才是机器可读的类型来源（ValueError/KeyError...），
+            # 而前面的业务消息（"job crashed"）对人有用，一条记录里都留下。
+            exception = tb_exception.strip()
+            prior = entry.message.strip()
+            if _TRACEBACK_START_RE.search(header):
+                # 记录本身就是 traceback（日志从堆栈开始），异常行即报错内容
+                entry.message = exception
+                entry.stack = [header] + continuation
+            else:
+                entry.message = f"{prior} ← {exception}" if prior else exception
+                entry.stack = continuation  # 首元素是 "Traceback..."，顶帧查找会跳过它
+            if entry.level == "UNKNOWN":
+                entry.level = "ERROR"  # traceback 本身就是错误，无需再猜
+            return entry
+
+        entry.stack = continuation
+        if continuation and entry.level == "UNKNOWN" and classify_error(header) != "GenericError":
+            # printStackTrace() 直出的裸异常行没有级别标记，但有堆栈 + 可识别类型，
+            # 认定它是错误行有据可依（否则整段堆栈在报告里完全不可见）。
+            entry.level = "ERROR"
+        return entry
     
     def _parse_line(self, line: str) -> Optional[LogEntry]:
         """解析单行日志"""
