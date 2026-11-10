@@ -122,6 +122,16 @@ def shell(level, api_key):
 
 
 @main.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="监听地址（默认仅本机，保护日志隐私）")
+@click.option("--port", "-p", default=8080, show_default=True, help="监听端口")
+@click.option("--no-open", is_flag=True, help="不自动打开浏览器")
+def web(host, port, no_open):
+    """启动本地 Web 界面（粘贴/拖拽日志，在线分析）"""
+    from .web import run_web
+    run_web(host=host, port=port, open_browser=not no_open)
+
+
+@main.command()
 @click.argument("log_file", type=click.Path(exists=True))
 @click.option("--interval", "-i", default=5, help="监控间隔(秒)")
 @click.option("--api-key", "-k", default=None, help="DeepSeek API Key (也可通过 DEEPSEEK_API_KEY 环境变量设置)")
