@@ -102,3 +102,25 @@ class TestLocalReportCoherence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWarningCountV019(unittest.TestCase):
+    """v0.1.9: warning_count 改为全量统计，默认 ERROR 阈值下不再恒为 0"""
+
+    def setUp(self):
+        self.analyzer = LogAnalyzer()
+
+    def test_warning_count_visible_under_default_error_threshold(self):
+        log = (
+            "2026-11-11 09:00:01 WARNING [app] memory usage 85%\n"
+            "2026-11-11 09:00:02 WARNING [app] slow query 1.2s\n"
+            "2026-11-11 09:00:03 ERROR [db] ConnectionTimeout: timeout\n"
+        )
+        report = self.analyzer.analyze_stdin(log)  # 默认 min_level=ERROR
+        self.assertEqual(report.warning_count, 2)
+        self.assertEqual(report.error_count, 1)
+
+    def test_warning_count_still_counts_when_threshold_lowered(self):
+        log = "2026-11-11 09:00:01 WARNING [app] memory usage 85%\n"
+        report = self.analyzer.analyze_stdin(log, min_level="WARN")
+        self.assertEqual(report.warning_count, 1)

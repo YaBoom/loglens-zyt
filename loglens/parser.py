@@ -110,7 +110,8 @@ class LogParser:
     # 支持的日志格式
     PATTERNS = {
         # 标准格式: 2026-03-16 10:30:45 ERROR [source] message
-        "standard": r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|TRACE)\s+\[?([^\]]+)?\]?\s+(.*)",
+        # v0.1.9: 补 CRITICAL —— Python logging/logging4j 常见级别，漏掉会整行降级 UNKNOWN
+        "standard": r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL|TRACE)\s+\[?([^\]]+)?\]?\s+(.*)",
         
         # Spring Boot 格式
         # v0.1.4: logger 与冒号之间允许空格 — 真实输出形如
@@ -135,6 +136,10 @@ class LogParser:
         "CRITICAL": "CRITICAL",
         "TRACE": "DEBUG",
     }
+
+    # v0.1.9: 级别排序表。此前藏在 filter_by_level 局部变量里且缺 WARN/CRITICAL，
+    # 导致 --level WARN 静默降级为 INFO、CRITICAL 日志在默认 ERROR 阈值下被静默排除
+    LEVEL_ORDER = {"DEBUG": 0, "INFO": 1, "WARNING": 2, "ERROR": 3, "FATAL": 4, "CRITICAL": 4}
 
     # v0.1.2: JSON 日志常见字段别名（不同日志框架字段名差异大）
     JSON_FIELD_ALIASES = {
@@ -419,12 +424,16 @@ class LogParser:
         return self.LEVEL_KEYWORDS.get(level.upper(), "INFO")
     
     def filter_by_level(self, entries: List[LogEntry], min_level: str = "INFO") -> List[LogEntry]:
-        """按级别过滤"""
-        level_order = {"DEBUG": 0, "INFO": 1, "WARNING": 2, "ERROR": 3, "FATAL": 4}
-        min_level_value = level_order.get(min_level.upper(), 1)
+        """按级别过滤（v0.1.9: 阈值别名先归一，未知级别显式报错，不再静默降级）"""
+        canonical = self.LEVEL_KEYWORDS.get(str(min_level).upper())
+        if canonical is None or canonical not in self.LEVEL_ORDER:
+            raise ValueError(
+                f"未知日志级别: {min_level!r}（可选: DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL）"
+            )
+        min_level_value = self.LEVEL_ORDER[canonical]
         return [
-            e for e in entries 
-            if level_order.get(e.level, 1) >= min_level_value
+            e for e in entries
+            if self.LEVEL_ORDER.get(e.level, 1) >= min_level_value
         ]
     
     def get_error_summary(self, entries: List[LogEntry]) -> dict:

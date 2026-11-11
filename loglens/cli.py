@@ -43,10 +43,21 @@ def _validate_log_file(ctx, param, value):
     return value
 
 
+def _validate_level(ctx, param, value):
+    """v0.1.9: 在 CLI 入口校验级别拼写，错别字当场报错而不是静默按 INFO 处理"""
+    v = str(value).upper()
+    if v not in ("DEBUG", "INFO", "WARN", "WARNING", "ERROR", "FATAL", "CRITICAL"):
+        raise click.BadParameter(
+            f"未知日志级别 {value!r}，可选: DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL"
+        )
+    return v
+
+
 @main.command()
 @click.argument("log_file", callback=_validate_log_file)
 @click.option("--tail", "-t", type=int, help="只分析最后N行")
-@click.option("--level", "-l", default="ERROR", help="最低日志级别 (DEBUG|INFO|WARN|ERROR)")
+@click.option("--level", "-l", default="ERROR", callback=_validate_level,
+              help="最低日志级别 (DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)")
 @click.option("--output", "-o", type=click.Path(), help="输出报告到文件")
 @click.option("--api-key", "-k", default=None, help="DeepSeek API Key (也可通过 DEEPSEEK_API_KEY 环境变量设置)")
 @click.option("--debug", "-d", is_flag=True, help="输出调试信息 (也可通过 LOGLENS_DEBUG=1 设置)")
@@ -80,7 +91,8 @@ def analyze(log_file, tail, level, output, api_key, debug):
 
 
 @main.command()
-@click.option("--level", "-l", default="ERROR", help="最低日志级别")
+@click.option("--level", "-l", default="ERROR", callback=_validate_level,
+              help="最低日志级别 (DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)")
 @click.option("--api-key", "-k", default=None, help="DeepSeek API Key (也可通过 DEEPSEEK_API_KEY 环境变量设置)")
 def shell(level, api_key):
     """交互式分析模式"""

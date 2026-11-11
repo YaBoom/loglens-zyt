@@ -362,7 +362,8 @@ class LogAnalyzer:
             root_cause=root_cause,
             suggestions=suggestions,
             error_count=error_summary["total_errors"],
-            warning_count=len([e for e in filtered_entries if e.level == "WARNING"]),
+            # v0.1.9: 警告数量改在过滤前统计——默认阈值 ERROR 会把 WARNING 滤掉，旧口径恒为 0
+            warning_count=len([e for e in entries if e.level == "WARNING"]),
             analyzed_lines=len([line for line in content.split("\n") if line.strip()]),
             error_samples=self._collect_error_samples(error_summary),
             event_count=len(entries),

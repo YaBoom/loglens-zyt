@@ -25,7 +25,7 @@ from . import __version__
 # 而且本地分析对超大日志本来就该先 tail/head 截取。
 MAX_CONTENT_BYTES = 10 * 1024 * 1024
 
-VALID_LEVELS = ("DEBUG", "INFO", "WARN", "ERROR")
+VALID_LEVELS = ("DEBUG", "INFO", "WARN", "WARNING", "ERROR", "FATAL", "CRITICAL")
 
 
 def _report_to_dict(report: AnalysisReport, elapsed: float) -> dict:
@@ -168,7 +168,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
   <div class="bar">
     <label>最低级别
       <select id="level">
-        <option>ERROR</option><option>WARN</option><option>INFO</option><option>DEBUG</option>
+        <option>ERROR</option><option>FATAL</option><option>WARN</option><option>INFO</option><option>DEBUG</option>
       </select>
     </label>
     <button id="go" onclick="run()">开始分析</button>

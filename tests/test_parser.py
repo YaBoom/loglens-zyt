@@ -123,6 +123,32 @@ class TestParseAndAggregation(unittest.TestCase):
         self.assertEqual(len(self.parser.filter_by_level(entries, "WARNING")), 2)
         self.assertEqual(len(self.parser.filter_by_level(entries, "DEBUG")), 4)
 
+    def test_filter_by_level_warn_alias_v019(self):
+        """v0.1.9: --level WARN 曾因 level_order 缺 WARN 键静默降级为 INFO"""
+        entries = self.parser.parse(
+            "2026-10-19 10:00:00 DEBUG [x] d\n"
+            "2026-10-19 10:00:01 INFO [x] i\n"
+            "2026-10-19 10:00:02 WARNING [x] w\n"
+            "2026-10-19 10:00:03 ERROR [x] e\n"
+        )
+        # WARN 与 WARNING 等价：排除 DEBUG/INFO，保留 WARNING+ERROR
+        self.assertEqual(len(self.parser.filter_by_level(entries, "WARN")), 2)
+
+    def test_filter_by_level_includes_critical_at_error_threshold_v019(self):
+        """v0.1.9: CRITICAL 曾不在排序表里，默认 ERROR 阈值下被静默排除"""
+        entries = self.parser.parse(
+            "2026-10-19 10:00:00 CRITICAL [x] disk full\n"
+            "2026-10-19 10:00:01 ERROR [x] e\n"
+        )
+        self.assertEqual(entries[0].level, "CRITICAL")
+        self.assertEqual(len(self.parser.filter_by_level(entries, "ERROR")), 2)
+
+    def test_filter_by_level_unknown_raises_v019(self):
+        """v0.1.9: 未知级别显式报错，不再静默按 INFO 处理"""
+        entries = self.parser.parse("2026-10-19 10:00:00 ERROR [x] e\n")
+        with self.assertRaises(ValueError):
+            self.parser.filter_by_level(entries, "WARNNG")
+
     def test_error_summary_counts_types(self):
         entries = self.parser.parse(
             '{"level":"error","msg":"NullPointerException in service"}\n'
