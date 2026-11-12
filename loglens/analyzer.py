@@ -206,15 +206,58 @@ class LogAnalyzer:
         return samples
 
     @staticmethod
-    def _top_frame(entry: LogEntry, max_len: int = 160) -> Optional[str]:
-        """v0.1.7: 取堆栈里第一个"帧"行（Java 的 at / Python 的 File）。"""
-        for line in entry.stack or []:
-            stripped = line.strip()
-            if re.match(r"at\s+\S", stripped) or stripped.startswith("File \""):
-                if len(stripped) > max_len:
-                    stripped = stripped[:max_len] + "…"
-                return stripped
+    def _frame_of(line: str, max_len: int = 160) -> Optional[str]:
+        """单行是否为"帧"行（Java 的 at / Python 的 File），是则返回截断后的帧文本。"""
+        stripped = line.strip()
+        if re.match(r"at\s+\S", stripped) or stripped.startswith("File \""):
+            if len(stripped) > max_len:
+                stripped = stripped[:max_len] + "…"
+            return stripped
         return None
+
+    # v0.1.10: 因果分节标记 —— 分节之后的第一帧才是该分节的直接爆点
+    _CHAIN_MARKERS = (
+        "Caused by:",                                # Java 异常链
+        "During handling of the above exception",    # Python 隐式因果链
+        "The above exception was the direct cause",  # Python 显式 raise ... from
+    )
+
+    @classmethod
+    def _find_frame(cls, entry: LogEntry, max_len: int = 160) -> tuple:
+        """v0.1.10: 取堆栈中的关键帧，返回 (frame, is_root_cause)。
+
+        背调结论（异常栈分析实践文 + tsight "with root cause" 剖析）：
+        多个 Caused by 时，**最深层（最后一个分节）才是根本原因**——外层第一帧
+        只是表象（比如 PaymentService.charge），真凶在最后一个 Caused by 之后的
+        at 帧（比如 Driver.load）。ELK/Splunk 要 grok 额外配置才能提取 cause 链，
+        轻量工具应该默认就给对。
+
+        策略：找最后一个因果分节标记，取其后第一帧 → 标记为根因；
+        无因果链时回退到第一个帧（普通堆栈，行为与 v0.1.7 一致）。
+        """
+        lines = entry.stack or []
+        chain_idx = -1
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if any(m in stripped for m in cls._CHAIN_MARKERS):
+                chain_idx = i
+        if chain_idx >= 0:
+            for line in lines[chain_idx + 1:]:
+                frame = cls._frame_of(line, max_len)
+                if frame:
+                    return frame, True
+        # 回退：无因果链（或链尾只有 "... N more" 没有帧）→ 第一个帧
+        for line in lines:
+            frame = cls._frame_of(line, max_len)
+            if frame:
+                return frame, False
+        return None, False
+
+    @classmethod
+    def _top_frame(cls, entry: LogEntry, max_len: int = 160) -> Optional[str]:
+        """v0.1.7 顶帧；v0.1.10 起优先返回因果链尾部的根因帧（LLM prompt 同步受益）。"""
+        frame, _is_root = cls._find_frame(entry, max_len)
+        return frame
 
     def _format_sample(self, entry: LogEntry, max_len: int = 300) -> str:
         """样本 = 表头行（不含堆栈） + 可选顶帧。
@@ -225,12 +268,14 @@ class LogAnalyzer:
         header = entry.raw.split("\n", 1)[0].strip()
         if len(header) > max_len:
             header = header[:max_len] + "…"
-        frame = self._top_frame(entry)
+        # v0.1.10: 因果链尾部取到的帧直接标注"根因"，用户不用自己往下翻 Caused by
+        frame, is_root = self._find_frame(entry)
         if not frame:
             return header
         if frame in header:  # 单行日志里本来就带帧信息，不必重复
             return header
-        return f"{header}\n   ↳ {frame}"
+        marker = "↳ 根因 " if is_root else "↳ "
+        return f"{header}\n   {marker}{frame}"
 
     def _generate_summary(self, error_summary: dict) -> str:
         """生成摘要"""

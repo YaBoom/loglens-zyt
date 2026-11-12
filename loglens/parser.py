@@ -29,7 +29,15 @@ _CONTINUATION_RE = re.compile(
     r"|Suppressed:"                      # Java suppressed 异常
     r"|[ \t]*\.\.\.\s*\d+\s+more[ \t]*$" # Java ... 23 more
     r"|[ \t]*File\s+\".+\",\s*line\s+\d+"# Python 堆栈帧
+    r"|During handling of the above exception"      # Python 隐式因果链分节标记
+    r"|The above exception was the direct cause"    # Python 显式 raise ... from
     r")"
+)
+
+# Python 因果链分节标记（顶格出现，且常在上一节异常行 flush 之后到达——
+# 那时 header 已清空，需要"重新接回上一条记录"而不是独立成条）
+_PY_CHAIN_RE = re.compile(
+    r"^(?:During handling of the above exception|The above exception was the direct cause)"
 )
 
 # Python traceback 的首行只是个标题，真正的异常在其后顶格那一行
@@ -198,6 +206,18 @@ class LogParser:
                 continue
 
             if header is None:
+                # v0.1.10: Python 因果链分节标记（"During handling..." 等）出现在
+                # 上一节异常行 flush 之后（header 已清空）。它明确宣告"这还是同一次
+                # 故障"，应重新接回上一条记录 —— 否则一次链式故障会被算成多条错误，
+                # 根因帧也会与原始异常失去关联。
+                if records and _PY_CHAIN_RE.match(line):
+                    prev_header, prev_cont, prev_tb = records.pop()
+                    header = prev_header
+                    # 上一节的异常行回填到标记之前（保持原始顺序），标记行本身也入续行
+                    continuation = prev_cont + ([prev_tb] if prev_tb else []) + [line]
+                    tb_exception = None  # 已回填，等新分节的异常行重新捕获
+                    tb_mode = False      # 等真正的 "Traceback..." 行到了再开捕获
+                    continue
                 header = line
                 tb_mode = bool(_TRACEBACK_START_RE.search(line))
                 continue

@@ -187,5 +187,90 @@ class TestStackInReport(unittest.TestCase):
         self.assertEqual(report.event_count, 2)
 
 
+class TestRootCauseFrame(unittest.TestCase):
+    """v0.1.10: 异常链的根因帧 —— 最后一个 Caused by 之后的第一帧才是真凶。
+
+    背调结论：多个 Caused by 时最深层才是根本原因；外层第一帧只是表象。
+    旧实现取第一个 at 帧，会指向业务包装层（charge）而非真凶（Driver.load）。
+    """
+
+    def setUp(self):
+        self.analyzer = LogAnalyzer()
+
+    def test_caused_by_frame_wins_over_outer_frame(self):
+        entries = LogParser().parse(CHAINED_CAUSE_LOG)
+        frame, is_root = LogAnalyzer._find_frame(entries[0])
+        self.assertTrue(is_root)
+        self.assertIn("Driver.load(Driver.java:33)", frame)
+        self.assertNotIn("PaymentService.charge", frame)
+
+    def test_double_caused_by_uses_last_section(self):
+        """两个 Caused by → 取最后一个分节的帧（最深层）"""
+        log = (
+            "2026-11-12 09:00:00 ERROR [pay] BizException: charge failed\n"
+            "\tat com.a.PaymentService.charge(PaymentService.java:10)\n"
+            "Caused by: java.sql.SQLException: connection reset\n"
+            "\tat com.a.Pool.fetch(Pool.java:20)\n"
+            "Caused by: java.net.SocketTimeoutException: Read timed out\n"
+            "\tat java.base/java.net.Socket.input(Socket.java:938)\n"
+        )
+        entries = LogParser().parse(log)
+        frame, is_root = LogAnalyzer._find_frame(entries[0])
+        self.assertTrue(is_root)
+        self.assertIn("Socket.java:938", frame)
+        self.assertNotIn("Pool.java:20", frame)
+
+    def test_plain_stack_keeps_first_frame(self):
+        """无因果链的普通堆栈：行为与 v0.1.7 一致（第一个帧，非根因标注）"""
+        entries = LogParser().parse(JAVA_STACK_LOG)
+        frame, is_root = LogAnalyzer._find_frame(entries[0])
+        self.assertFalse(is_root)
+        self.assertIn("OrderService.java:42", frame)
+
+    def test_chain_tail_without_frame_falls_back(self):
+        """链尾只有 "... N more" 没有帧 → 回退到第一个帧，不报错"""
+        log = (
+            "2026-11-12 09:00:00 ERROR [pay] BizException: charge failed\n"
+            "\tat com.a.PaymentService.charge(PaymentService.java:10)\n"
+            "Caused by: java.sql.SQLException: same\n"
+            "\t... 23 more\n"
+        )
+        entries = LogParser().parse(log)
+        frame, is_root = LogAnalyzer._find_frame(entries[0])
+        self.assertFalse(is_root)
+        self.assertIn("PaymentService.java:10", frame)
+
+    def test_sample_marks_root_cause(self):
+        """报告样本必须显式标注「根因」，用户不用自己往下翻 Caused by"""
+        report = self.analyzer.analyze_stdin(CHAINED_CAUSE_LOG)
+        joined = "\n".join(report.error_samples)
+        self.assertIn("↳ 根因 ", joined)
+        self.assertIn("Driver.load(Driver.java:33)", joined)
+
+    def test_python_chained_traceback_root_frame(self):
+        """Python 隐式因果链（During handling）→ 取最后分节的 File 帧"""
+        log = (
+            "2026-11-12 09:00:00,000 - app - ERROR - job failed\n"
+            "Traceback (most recent call last):\n"
+            '  File "/app/worker.py", line 42, in run\n'
+            "    handle(job)\n"
+            '  File "/app/db.py", line 9, in handle\n'
+            "    conn.query(sql)\n"
+            "sqlite3.OperationalError: database is locked\n"
+            "\n"
+            "During handling of the above exception, another exception occurred:\n"
+            "\n"
+            "Traceback (most recent call last):\n"
+            '  File "/app/retry.py", line 12, in retry\n'
+            "    save(state)\n"
+            "pickle.PickleError: cannot serialize\n"
+        )
+        entries = LogParser().parse(log)
+        frame, is_root = LogAnalyzer._find_frame(entries[0])
+        self.assertTrue(is_root)
+        self.assertIn("retry.py", frame)
+        self.assertNotIn("worker.py", frame)
+
+
 if __name__ == "__main__":
     unittest.main()
