@@ -13,7 +13,7 @@
 LogLens is an AI-powered log analyzer that reads your error logs, identifies the real root cause, and suggests concrete fixes — all from your terminal.
 
 ```bash
-pip install loglens
+pip install loglens-zyt
 loglens analyze app.log
 ```
 
@@ -30,7 +30,7 @@ loglens analyze app.log
 ## 📦 Installation
 
 ```bash
-pip install loglens
+pip install loglens-zyt
 ```
 
 Or from source:

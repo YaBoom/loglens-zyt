@@ -2,8 +2,8 @@
 
 > 智能日志分析工具 - 用AI快速定位线上问题根因
 
-[![PyPI version](https://img.shields.io/pypi/v/loglens?color=blue)](https://pypi.org/project/loglens/)
-[![PyPI Downloads](https://img.shields.io/pypi/dm/loglens?color=blue)](https://pypi.org/project/loglens/)
+[![PyPI version](https://img.shields.io/pypi/v/loglens-zyt?color=blue)](https://pypi.org/project/loglens-zyt/)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/loglens-zyt?color=blue)](https://pypi.org/project/loglens-zyt/)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/YaBoom/loglens-zyt?style=social)](https://github.com/YaBoom/loglens-zyt/stargazers)
@@ -28,7 +28,7 @@ LogLens 是一个基于大模型的智能日志分析工具，帮助开发者快
 ## 📦 安装
 
 ```bash
-pip install loglens
+pip install loglens-zyt
 ```
 
 或者从源码安装：

@@ -1,5 +1,5 @@
 [project]
-name = "loglens"
+name = "loglens-zyt"
 version = "0.1.10"
 description = "智能日志分析工具 - 用AI快速定位线上问题根因"
 readme = "README.md"
