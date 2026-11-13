@@ -55,7 +55,7 @@ def _validate_level(ctx, param, value):
 
 @main.command()
 @click.argument("log_file", callback=_validate_log_file)
-@click.option("--tail", "-t", type=int, help="只分析最后N行")
+@click.option("--tail", "-t", type=int, help="只分析最后N行（v0.1.11: 流式读取大文件友好，窗口起点自动回扩到完整记录边界）")
 @click.option("--level", "-l", default="ERROR", callback=_validate_level,
               help="最低日志级别 (DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)")
 @click.option("--output", "-o", type=click.Path(), help="输出报告到文件")
@@ -67,7 +67,7 @@ def analyze(log_file, tail, level, output, api_key, debug):
     source_label = "stdin 管道输入" if log_file == "-" else log_file
     console.print(f"\n🔍 正在分析日志: {source_label}")
     if tail:
-        console.print(f"📄 只分析最后 {tail} 行")
+        console.print(f"📄 只分析最后 {tail} 行（流式读取，记录边界自动回扩）")
     console.print(f"🎯 最低级别: {level}\n")
 
     start_time = time.time()

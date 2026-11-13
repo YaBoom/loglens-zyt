@@ -7,7 +7,8 @@ import re
 import sys
 from dataclasses import dataclass, field
 from typing import Optional, List
-from .parser import LogParser, LogEntry, classify_error
+# v0.1.11: tail 边界回扩需要识别 Python traceback 首行（它与堆栈帧同属"被切断的记录"）
+from .parser import LogParser, LogEntry, classify_error, _TRACEBACK_START_RE
 from .llm_client import get_llm_client, LLMClient
 
 
@@ -159,6 +160,90 @@ class LogAnalyzer:
             self._llm_client = get_llm_client(self.api_key)
         return self._llm_client
     
+    # v0.1.11: 尾部读取参数 —— 块大小 64KB，向前多取 512 行作为边界回扩缓冲
+    # （一条 Java 异常堆栈可达 40~200 行，512 能覆盖绝大多数"窗口起点切在堆栈中间"的场景）
+    _TAIL_CHUNK_SIZE = 65536
+    _TAIL_GUARD_LINES = 512
+
+    def _read_tail_lines(self, path: str, need_lines: int) -> List[str]:
+        """v0.1.11: 流式读取文件末尾约 need_lines 行，不再全量 readlines。
+
+        用户痛点（背调：klogg/glogg/lnav 的共同卖点都是"磁盘直读、只保留窗口"；
+        devspera《How to Open a 5GB Log File Without Freezing》——把整个文件
+        读进内存是大日志工具的头号死因）：旧实现 `f.readlines()` 会把 5GB 日志
+        整个读进内存再取最后 N 行，大文件场景直接 OOM/卡死。
+
+        实现：二进制模式从文件尾按块向前读，按 \n 切分后只保留行内容，
+        拿够 need_lines 即停。内存占用 = O(窗口行数)，与文件大小无关。
+        """
+        lines: List[bytes] = []  # 逆序收集
+        remainder = b""
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            pos = f.tell()
+            while pos > 0 and len(lines) <= need_lines:
+                step = min(self._TAIL_CHUNK_SIZE, pos)
+                pos -= step
+                f.seek(pos)
+                block = f.read(step) + remainder
+                parts = block.split(b"\n")
+                # parts[0] 是块首的"半行"（前一块的行尾），留给下一轮拼接；
+                # pos==0 时它是文件的第一行，是完整的
+                remainder = parts[0]
+                for piece in reversed(parts[1:]):
+                    lines.append(piece)
+        if remainder:
+            lines.append(remainder)
+        lines.reverse()
+        result = [line.decode("utf-8", errors="ignore") for line in lines]
+        # 文件比 need_lines 短时全量返回；超出时只保留末尾 need_lines 行（契约：方法名即承诺）
+        if len(result) > need_lines:
+            result = result[len(result) - need_lines:]
+        return result
+
+    def _is_cut_boundary(self, line: str) -> bool:
+        """v0.1.11: 判断某行是否是"被 --tail 切断的记录开头"。
+
+        复用 parser 的续行判定（_CONTINUATION_RE 与 _looks_like_record_start），
+        保证 tail 窗口裁剪与解析归并用的是同一套口径——两处各写一遍，
+        改一处忘另一处就会"窗口切歪了、解析还以为是对的"。
+        Python 的 "Traceback (most recent call last):" 顶格出现但不匹配续行正则，
+        解析器只在组内特殊处理它，这里需要单独补上。
+        """
+        stripped = line.rstrip("\r")
+        if not stripped.strip():
+            return False  # 空行不是任何记录的开头，不作为回扩依据
+        parser = self.parser
+        if parser._looks_like_record_start(stripped):
+            return False
+        if _TRACEBACK_START_RE.search(stripped):
+            return True
+        return parser._is_continuation(stripped)
+
+    def _tail_window(self, path: str, tail: int) -> List[str]:
+        """v0.1.11: 取最后 tail 行，但窗口起点向前回扩到完整记录边界。
+
+        用户痛点（v0.1.7 引入多行归并后暴露）：`lines[-tail:]` 可能把窗口起点
+        切在一条 Java 异常堆栈的中间——30 帧堆栈只剩 10 帧，触发它的 ERROR 行
+        整个丢失。解析器只能把孤儿帧各自当成 UNKNOWN 记录，报告里出现
+        "15 行碎片、0 个错误"，而真实情况是"1 个错误、堆栈缺头"。
+
+        策略：向后多读 _TAIL_GUARD_LINES 行作为缓冲，从窗口第一行起，
+        只要它像"续行/Traceback 首行"就向前补一行，直到遇到真正的记录起始行。
+        与解析器的保守哲学一致：只回扩明确像被切断的行，绝不为了凑整多吞记录。
+        """
+        n = max(1, tail)
+        need = n + self._TAIL_GUARD_LINES
+        lines = self._read_tail_lines(path, need)
+        if len(lines) <= n:
+            window, pre = lines, []
+        else:
+            window, pre = lines[-n:], lines[:-n]
+        # 从缓冲区末尾逐行回扩，直到窗口第一行是完整记录的起始
+        while window and pre and self._is_cut_boundary(window[0]):
+            window.insert(0, pre.pop())
+        return window
+
     def analyze(self, log_path: str, tail: Optional[int] = None, min_level: str = "ERROR") -> AnalysisReport:
         """分析日志文件"""
 
@@ -167,10 +252,8 @@ class LogAnalyzer:
             # 从 stdin 读取（支持管道: grep ERROR app.log | loglens analyze -）
             content = sys.stdin.read()
         elif tail:
-            # 读取最后 tail 行
-            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-                content = "".join(lines[-tail:])
+            # v0.1.11: 流式取尾部窗口 + 记录边界回扩（不再全量 readlines）
+            content = "\n".join(self._tail_window(log_path, tail))
         else:
             # 读取全部
             with open(log_path, "r", encoding="utf-8", errors="ignore") as f:

@@ -2,7 +2,7 @@
 LogLens - 智能日志分析工具
 """
 
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 __author__ = "YaBoom"
 
 from .analyzer import LogAnalyzer
