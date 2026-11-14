@@ -272,5 +272,101 @@ class TestRootCauseFrame(unittest.TestCase):
         self.assertNotIn("worker.py", frame)
 
 
+class TestUnindentedFrames(unittest.TestCase):
+    """v0.1.12: 顶格（无缩进）Java 堆栈帧 —— 自定义 layout 不缩进的场景。
+
+    背调结论（OTel multiline / Fluent Bit / Filebeat / DataSet lineGroupers
+    的续行规则全部依赖行首缩进 ^\\s+at）：自定义 log4j/logback layout 顶格
+    输出 at 帧时同类工具全部漏合。但顶格判定必须比缩进规则更严格
+    （限定符名 + 圆括号），否则英文句子 "at 10 o'clock (see above)"
+    会被误并入上一条 —— 宁可拆开，不可粘错的契约继续成立。
+    """
+
+    def setUp(self):
+        self.parser = LogParser()
+
+    def test_unindented_frames_merge_into_header(self):
+        log = (
+            "2026-11-14 09:00:00 ERROR [order] NullPointerException: order is null\n"
+            "at com.acme.order.OrderService.process(OrderService.java:42)\n"
+            "at com.acme.order.OrderController.submit(OrderController.java:88)\n"
+        )
+        entries = self.parser.parse(log)
+        self.assertEqual(len(entries), 1, "顶格 at 帧应并入上一条，而不是碎片化")
+        self.assertEqual(len(entries[0].stack), 2)
+        self.assertIn("OrderService.java:42", entries[0].stack[0])
+
+    def test_unindented_frame_with_jar_suffix(self):
+        """Spring Boot logback 帧后缀 ~[classes/:na] 不影响归并"""
+        log = (
+            "2026-11-14 09:00:00 ERROR [web] ConnectException: refused\n"
+            "at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:139) ~[tomcat-embed-core-10.1.5.jar:10.1.5]\n"
+        )
+        entries = self.parser.parse(log)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(len(entries[0].stack), 1)
+
+    def test_unindented_module_path_frame(self):
+        """JDK9+ 模块路径帧 java.base/java.lang.Thread.run 也能识别"""
+        log = (
+            "2026-11-14 09:00:00 ERROR [sys] boom\n"
+            "at java.base/java.lang.Thread.run(Thread.java:834)\n"
+        )
+        entries = self.parser.parse(log)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(len(entries[0].stack), 1)
+
+    def test_unindented_caused_by_chain(self):
+        """顶格 Caused by + 顶格帧的完整因果链一次归并；根因取链尾帧"""
+        log = (
+            "2026-11-14 09:00:00 ERROR [pay] PaymentException: charge failed\n"
+            "at com.acme.pay.PaymentService.charge(PaymentService.java:77)\n"
+            "Caused by: java.lang.ClassNotFoundException: no.driver\n"
+            "at java.base/java.lang.Class.forName0(Native Method)\n"
+            "at com.acme.pay.Driver.load(Driver.java:33)\n"
+        )
+        entries = self.parser.parse(log)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(len(entries[0].stack), 4)
+        frame, is_root = LogAnalyzer._find_frame(entries[0])
+        self.assertTrue(is_root)
+        # v0.1.10 口径：最后一个 Caused by 之后的第一帧 = 该分节直接爆点
+        self.assertIn("Class.forName0(Native Method)", frame)
+        self.assertNotIn("PaymentService.java", frame)
+
+    def test_plain_english_sentence_not_merged(self):
+        """反例：英文句子以 at 开头但不是 Java 帧形态，绝不并入"""
+        log = (
+            "2026-11-14 09:00:00 ERROR [app] batch stalled\n"
+            "at 10 o'clock (noon) the queue was still full\n"
+        )
+        entries = self.parser.parse(log)
+        self.assertEqual(len(entries), 2, "非帧形态的顶格行是新记录，不得粘上一条")
+        self.assertEqual(entries[0].stack, [])
+
+    def test_plain_text_without_parens_not_merged(self):
+        """反例：at + 无括号的普通文本不并入"""
+        log = (
+            "2026-11-14 09:00:00 ERROR [app] rate limit hit\n"
+            "at least 5000 requests arrived in one second\n"
+        )
+        entries = self.parser.parse(log)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].stack, [])
+
+    def test_unindented_frame_becomes_error_and_top_frame(self):
+        """裸异常 + 顶格帧（printStackTrace 直出）：仍推断为 ERROR，顶帧可用"""
+        log = (
+            "java.lang.IllegalStateException: already closed\n"
+            "at com.acme.db.Connection.ensureOpen(Connection.java:58)\n"
+            "at com.acme.db.Connection.exec(Connection.java:120)\n"
+        )
+        entries = self.parser.parse(log)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].level, "ERROR")
+        frame, _ = LogAnalyzer._find_frame(entries[0])
+        self.assertIn("ensureOpen(Connection.java:58)", frame)
+
+
 if __name__ == "__main__":
     unittest.main()

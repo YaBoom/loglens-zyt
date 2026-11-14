@@ -43,6 +43,14 @@ _PY_CHAIN_RE = re.compile(
 # Python traceback 的首行只是个标题，真正的异常在其后顶格那一行
 _TRACEBACK_START_RE = re.compile(r"Traceback\s*\(most recent call last\)")
 
+# v0.1.12: 顶格（无缩进）Java 堆栈帧 —— 部分自定义 log4j/logback layout
+# 输出的堆栈帧不带缩进，缩进规则（[ \t]+at）全部漏合，一条异常照样被拆成
+# 多条碎片。不能沿用缩进规则的宽松口径（at + 任意非空白）：普通英文句子
+# "at 10 o'clock (see above)" 会误并入上一条。严格限定为
+# "at 限定符名.方法(" 的 Java 帧形态 —— 包/模块路径至少一个点号，
+# 帧参数括号开头；后缀 ~[classes/:na] / [...] 不影响前缀判定。
+_UNINDENTED_JAVA_FRAME_RE = re.compile(r"^at\s+[\w$/<>$]+(?:\.[\w$/<>$]+)+\(")
+
 
 # v0.1.6: 无语义化类名的错误（"connection timed out after 5000ms"）按关键词归类。
 # 顺序敏感：越具体越靠前，兜底的 Timeout 必须放最后，否则会吞掉 ConnectionTimeout/ReadTimeout。
@@ -251,7 +259,7 @@ class LogParser:
         """该行是否属于上一条记录的续行（堆栈帧等）"""
         if self._looks_like_record_start(line):
             return False
-        return bool(_CONTINUATION_RE.match(line))
+        return bool(_CONTINUATION_RE.match(line) or _UNINDENTED_JAVA_FRAME_RE.match(line))
 
     def _looks_like_record_start(self, line: str) -> bool:
         """行本身是否标志着一条新日志的开始（即使它带缩进）"""
